@@ -153,6 +153,9 @@ class RoundLog:
 @dataclass
 class LoopState:
     goal: str = ""
+    goal_summary: str = ""  # 精简版目标（UI显示用）
+    refined_goal: str = ""  # 润色版目标（首次发送给Claude）
+    goal_set: bool = False  # 是否已设定目标（目标模式）
     memory: List[Dict[str, Any]] = field(default_factory=list)
     logs: List[RoundLog] = field(default_factory=list)
     session_id: Optional[str] = None
@@ -414,6 +417,17 @@ async def run_claude_once(*, prompt: str, cwd: str = ".", state: LoopState) -> s
             else:
                 aprint(_pretty(obj))
 
+    def clean_invalid_unicode(text: str) -> str:
+        """移除无效的 Unicode 代理字符"""
+        try:
+            # 尝试直接编码解码，如果失败则移除无效字符
+            text.encode('utf-8')
+            return text
+        except UnicodeEncodeError:
+            # 移除无效的代理字符 (U+D800 到 U+DFFF)
+            import re
+            return re.sub(r'[\ud800-\udfff]', '', text)
+
     try:
         assert proc.stdout is not None
         while True:
@@ -421,6 +435,7 @@ async def run_claude_once(*, prompt: str, cwd: str = ".", state: LoopState) -> s
             if not data:
                 break
             s = data.decode(errors="replace")
+            s = clean_invalid_unicode(s)  # 清理无效 Unicode 字符
             raw_chunks.append(s)
             buffer += s
             consume_buffer()
@@ -440,7 +455,7 @@ async def run_claude_once(*, prompt: str, cwd: str = ".", state: LoopState) -> s
                 pass
         raise
 
-    return "".join(raw_chunks).strip()
+    return clean_invalid_unicode("".join(raw_chunks).strip())
 
 
 # ------------------------------------------------------------
@@ -487,6 +502,64 @@ def judge_once(*, goal: str, claude_output: str, memory: List[Dict[str, Any]], s
         return {"done": False, "summary": f"Judge出错: {e}", "next_prompt": "继续"}
 
 
+def refine_goal_once(*, goal: str, state: LoopState) -> str:
+    """润色目标：优化表述，使其更清晰明确"""
+    api_key = os.environ.get("OPENAI_API_KEY", OPENAI_API_KEY)
+    if not api_key:
+        return goal
+
+    try:
+        client = OpenAI(api_key=api_key, base_url=os.environ.get("OPENAI_BASE_URL", OPENAI_BASE_URL))
+
+        resp = client.chat.completions.create(
+            model=os.environ.get("OPENAI_MODEL", OPENAI_MODEL),
+            temperature=0,
+            messages=[
+                {"role": "system", "content": "请将以下目标润色优化，使其更清晰、简洁、明确。只输出优化后的目标，不要其他内容。"},
+                {"role": "user", "content": goal},
+            ],
+        )
+
+        if hasattr(resp, "usage") and resp.usage:
+            state.update_tokens(resp.usage)
+            _refresh_ui()
+
+        refined = resp.choices[0].message.content.strip()
+        return refined if refined else goal
+
+    except Exception:
+        return goal
+
+
+def summarize_goal_once(*, goal: str, state: LoopState) -> str:
+    """生成精简版目标（UI显示用）"""
+    api_key = os.environ.get("OPENAI_API_KEY", OPENAI_API_KEY)
+    if not api_key:
+        return goal
+
+    try:
+        client = OpenAI(api_key=api_key, base_url=os.environ.get("OPENAI_BASE_URL", OPENAI_BASE_URL))
+
+        resp = client.chat.completions.create(
+            model=os.environ.get("OPENAI_MODEL", OPENAI_MODEL),
+            temperature=0,
+            messages=[
+                {"role": "system", "content": "请将以下目标精简为一句话摘要（15字以内）。只输出摘要，不要其他内容。"},
+                {"role": "user", "content": goal},
+            ],
+        )
+
+        if hasattr(resp, "usage") and resp.usage:
+            state.update_tokens(resp.usage)
+            _refresh_ui()
+
+        summary = resp.choices[0].message.content.strip()
+        return summary if summary else goal
+
+    except Exception:
+        return goal
+
+
 def update_goal_once(*, original_goal: str, additional_instruction: str, state: LoopState) -> str:
     api_key = os.environ.get("OPENAI_API_KEY", OPENAI_API_KEY)
     if not api_key:
@@ -501,7 +574,7 @@ def update_goal_once(*, original_goal: str, additional_instruction: str, state: 
 
         resp = client.chat.completions.create(
             model=os.environ.get("OPENAI_MODEL", OPENAI_MODEL),
-            temperature=0.3,  # 稍微有点创造性
+            temperature=0.7,  # 稍微有点创造性
             messages=[
                 {"role": "system", "content": "你是一个目标更新器。请基于原目标和追加指令，生成一个新的、整合的目标。"},
                 {"role": "user", "content": prompt},
@@ -521,10 +594,11 @@ def update_goal_once(*, original_goal: str, additional_instruction: str, state: 
         return original_goal  # 出错时返回原goal
 
 
-def build_claude_prompt(goal: str, next_instruction: str) -> str:
+def build_claude_prompt(goal: str, refined_goal: str, next_instruction: str, is_first: bool) -> str:
+    display_goal = refined_goal if is_first and refined_goal else goal
     if next_instruction.strip():
-        return f"目标：{goal}\n\n上一轮进展摘要：{next_instruction}\n\n请继续完成目标。"
-    return f"目标：{goal}\n\n请完成目标。"
+        return f"目标：{display_goal}\n\n上一轮进展摘要：{next_instruction}\n\n请继续完成目标。"
+    return f"目标：{display_goal}\n\n请完成目标。"
 
 
 async def self_loop(*, max_rounds: int = 6, cwd: str = ".", state: LoopState) -> Dict[str, Any]:
@@ -545,7 +619,8 @@ async def self_loop(*, max_rounds: int = 6, cwd: str = ".", state: LoopState) ->
 
             aprint(f"\n{'='*20} ROUND {r} {'='*20}")
 
-            prompt = build_claude_prompt(state.goal, next_instruction)
+            is_first = len(state.logs) == 0  # 无日志 = 首次运行
+            prompt = build_claude_prompt(state.goal, state.refined_goal, next_instruction, is_first)
 
             claude_output = await run_claude_once(prompt=prompt, cwd=cwd, state=state)
 
@@ -562,6 +637,7 @@ async def self_loop(*, max_rounds: int = 6, cwd: str = ".", state: LoopState) ->
 
             if judge["done"]:
                 state.status = AppStatus.FINISHED
+                state.goal_set = False  # 完成任务后清除目标模式
                 _refresh_ui()
                 return {"status": "completed", "rounds": r, "summary": judge["summary"]}
 
@@ -598,20 +674,44 @@ async def main() -> None:
             AppStatus.FINISHED: "ansiblue",
         }.get(state.status, "white")
 
+        goal_indicator = "🎯" if state.goal_set else "○"
+        goal_display = state.goal_summary if state.goal_summary else ""
+        if goal_display and len(goal_display) > 20:
+            goal_display = goal_display[:17] + "..."
+
         return HTML(
-            f" <b><style color='{status_color}'>{state.status.value}</style></b> | "
-            f"Round: <b>{state.current_round}</b> | "
+            f" {goal_indicator} <b><style color='{status_color}'>{state.status.value}</style></b>"
+            + (f" | 🎯 {goal_display}" if goal_display else "")
+            + f" | Round: <b>{state.current_round}</b> | "
             f"Tokens: <b><style color='ansicyan'>{state.total_tokens:,}</style></b> "
         )
 
     style = Style.from_dict({"bottom-toolbar": "#333333 bg:#dddddd"})
     session = PromptSession(bottom_toolbar=get_bottom_toolbar, style=style)
 
-    aprint("\n🚀 \033[1mClaude Code 自循环控制器 \033[0m")
-    aprint("\033[90m- 输入指令开始运行\n- 运行中输入指令可追加干预\n- Ctrl+C 暂停\n\033[0m")
+    aprint("\n \033[1mClaude Code Looper \033[0m")
+    aprint("\033[90m- /goal <目标>   设定目标（设为goal）")
+    aprint("- /start         开始运行当前goal")
+    aprint("- /clear         清除goal")
+    aprint("- /goal          查看当前goal（含精简版）")
+    aprint("- 直接输入消息   无goal时设为goal，有goal时视为补充指令")
+    aprint("- Ctrl+C 暂停\n\033[0m")
 
     background_task: Optional[asyncio.Task] = None
     prompt_html = HTML("<b><style color='#00aa00'>Command ></style></b> ")
+
+    async def run_single_prompt(prompt: str) -> None:
+        """单次运行 Claude Code（无循环）"""
+        state.status = AppStatus.RUNNING
+        _refresh_ui()
+        try:
+            await run_claude_once(prompt=prompt, cwd=".", state=state)
+            aprint(f"\n\033[1;32m[Done] 单次执行完成\033[0m")
+        except Exception as e:
+            aprint(f"\n\033[31m[Error] {e}\033[0m")
+        finally:
+            state.status = AppStatus.IDLE
+            _refresh_ui()
 
     while True:
         try:
@@ -623,35 +723,91 @@ async def main() -> None:
                     background_task.cancel()
                 break
 
-            if state.status == AppStatus.RUNNING:
-                if user_input:
-                    aprint(f"\n\033[1;33m[User Intervention] 追加指令: {user_input}\033[0m")
-                    state.memory.append(
-                        {"round": -1, "summary": "用户实时干预", "next_prompt": f"用户要求优先处理：{user_input}"}
-                    )
-                    # 结合追加指令重新生成新goal
+            # /start - 开始运行goal
+            if user_input.startswith("/start"):
+                if not state.goal_set:
+                    aprint("\n\033[33m[Error] 没有goal，请先设置goal\033[0m")
+                elif state.status == AppStatus.RUNNING:
+                    aprint("\n\033[33m[Info] 已在运行中\033[0m")
+                else:
+                    aprint(f"\n\033[1;32m[Start] 开始执行: {state.refined_goal or state.goal}\033[0m")
+                    if not (background_task and not background_task.done()):
+                        state.status = AppStatus.RUNNING
+                        background_task = asyncio.create_task(self_loop(max_rounds=MAX_ROUNDS, state=state))
+                continue
+
+            # /clear - 清除goal
+            if user_input.startswith("/clear"):
+                state.goal = ""
+                state.goal_summary = ""
+                state.refined_goal = ""
+                state.goal_set = False
+                state.memory = []
+                state.logs = []
+                state.current_round = 0
+                state.total_tokens = 0
+                aprint("\n\033[90m[Clear] goal已清除\033[0m")
+                continue
+
+            # /goal 命令
+            if user_input.startswith("/goal"):
+                goal_text = user_input[5:].strip()
+                if goal_text:
+                    # 设置新goal
+                    state.goal = goal_text
+                    state.goal_set = True
+                    state.memory = []
+                    state.logs = []
+                    state.current_round = 0
+                    state.total_tokens = 0
+                    aprint(f"\n\033[1;32m[Goal Set] 🎯 {state.goal}\033[0m")
+                    # 生成润色版和精简版
+                    state.refined_goal = refine_goal_once(goal=state.goal, state=state)
+                    state.goal_summary = summarize_goal_once(goal=state.goal, state=state)
+                    if state.refined_goal != state.goal:
+                        aprint(f"\033[90m[Refined] {state.refined_goal}\033[0m")
+                    if state.goal_summary != state.goal:
+                        aprint(f"\033[90m[Summary] 📌 {state.goal_summary}\033[0m")
+                elif state.goal_set:
+                    # 显示当前goal
+                    aprint(f"\n\033[90m[Current Goal] 🎯 {state.goal}\033[0m")
+                    if state.refined_goal:
+                        aprint(f"\033[90m[Refined] {state.refined_goal}\033[0m")
+                    if state.goal_summary:
+                        aprint(f"\033[90m[Summary] 📌 {state.goal_summary}\033[0m")
+                else:
+                    aprint("\n\033[33m[Usage] /goal <目标>\033[0m")
+                continue
+
+            # 无指令直接发消息的处理逻辑
+            if user_input:
+                if state.goal_set:
+                    # 有goal：视为追加指令
+                    aprint(f"\n\033[1;33m[Supplement] 追加指令: {user_input}\033[0m")
                     new_goal = update_goal_once(original_goal=state.goal, additional_instruction=user_input, state=state)
                     state.goal = new_goal
-                    aprint(f"\033[1;32m[Goal Updated] 新目标: {state.goal}\033[0m\n")
-            else:
-                if user_input:
-                    if state.status == AppStatus.IDLE:
-                        state.goal = user_input
-                        state.memory = []
-                        state.logs = []
-                        state.current_round = 0
-                        state.total_tokens = 0
-                    else:
-                        state.memory.append(
-                            {"round": -1, "summary": "用户修改指令后继续", "next_prompt": f"用户更新了指令：{user_input}"}
-                        )
-
-                if state.status == AppStatus.IDLE and not user_input:
-                    continue
-
-                if not (background_task and not background_task.done()):
-                    state.status = AppStatus.RUNNING
-                    background_task = asyncio.create_task(self_loop(max_rounds=MAX_ROUNDS, state=state))
+                    # 更新润色版和精简版
+                    state.refined_goal = refine_goal_once(goal=state.goal, state=state)
+                    state.goal_summary = summarize_goal_once(goal=state.goal, state=state)
+                    aprint(f"\033[90m[Refined] {state.refined_goal}\033[0m")
+                    aprint(f"\033[1;32m[Goal Updated] 📌 {state.goal_summary}\033[0m\n")
+                else:
+                    # 无goal：设为goal
+                    state.goal = user_input
+                    state.goal_set = True
+                    state.memory = []
+                    state.logs = []
+                    state.current_round = 0
+                    state.total_tokens = 0
+                    aprint(f"\n\033[1;32m[Goal Set] 🎯 {state.goal}\033[0m")
+                    # 生成润色版和精简版
+                    state.refined_goal = refine_goal_once(goal=state.goal, state=state)
+                    state.goal_summary = summarize_goal_once(goal=state.goal, state=state)
+                    if state.refined_goal != state.goal:
+                        aprint(f"\033[90m[Refined] {state.refined_goal}\033[0m")
+                    if state.goal_summary != state.goal:
+                        aprint(f"\033[90m[Summary] 📌 {state.goal_summary}\033[0m")
+                    aprint("\033[90m使用 /start 开始运行\033[0m\n")
 
         except KeyboardInterrupt:
             if background_task and not background_task.done():
