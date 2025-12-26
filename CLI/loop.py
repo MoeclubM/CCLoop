@@ -79,8 +79,13 @@ async def main() -> None:
         if goal_text and len(goal_text) > 15:
             goal_text = goal_text[:12] + "..."
 
-        elapsed = state.get_elapsed_time()
-        round_elapsed = state.get_round_elapsed() if state.current_round > 0 else "--:--"
+        # 任务完成后不再刷新计时器显示
+        if state.status == AppStatus.FINISHED:
+            elapsed = state.final_elapsed if hasattr(state, 'final_elapsed') else state.get_elapsed_time()
+            round_elapsed = "--:--"
+        else:
+            elapsed = state.get_elapsed_time()
+            round_elapsed = state.get_round_elapsed() if state.current_round > 0 else "--:--"
 
         input_t = state.total_input_tokens
         output_t = state.total_output_tokens
@@ -191,6 +196,8 @@ async def main() -> None:
                 state.clear_tokens()
                 state.start_time = None
                 state.round_start_time = None
+                if hasattr(state, 'final_elapsed'):
+                    del state.final_elapsed
                 aprint("\n\033[90m[Clear] goal已清除\033[0m")
                 continue
 

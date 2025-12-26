@@ -47,11 +47,32 @@ MAX_ROUNDS=100                              # 最大循环轮次（默认100）
 
 ## 使用
 
+### CLI版本
+
 ```bash
-python loop.py
+python CLI/loop.py
 ```
 
-### 交互命令
+### GUI版本
+
+```bash
+python GUI/gui.py
+```
+
+或使用启动脚本：
+
+**Windows:**
+```bash
+GUI\run_gui.bat
+```
+
+**Linux/Mac:**
+```bash
+chmod +x GUI/run_gui.sh
+GUI/run_gui.sh
+```
+
+### CLI版本交互命令
 
 | 命令 | 说明 |
 |------|------|
@@ -97,12 +118,19 @@ Command > /start
 
 ```
 CCLoop/
-├── loop.py          # 主程序，TUI 入口，命令行交互与主循环调度
-├── loop_core.py     # 核心循环与状态管理，Judge 调用、目标处理、循环控制
-├── display.py       # TUI/输出工具，格式化打印、状态栏、颜色输出
-├── json_utils.py    # JSON 解析增强，流式解析、编码处理
-├── prompts.py       # Judge/Refine/Summarize 等系统提示词
-├── token_stats.py   # Token 统计与数据结构
+├── CLI/             # CLI版本
+│   ├── loop.py          # 主程序，TUI 入口，命令行交互与主循环调度
+│   ├── loop_core.py     # 核心循环与状态管理，Judge 调用、目标处理、循环控制
+│   ├── display.py       # TUI/输出工具，格式化打印、状态栏、颜色输出
+│   ├── json_utils.py    # JSON 解析增强，流式解析、编码处理
+│   ├── prompts.py       # Judge/Refine/Summarize 等系统提示词
+│   ├── token_stats.py   # Token 统计与数据结构
+│   └── .env.example     # 环境变量配置模板
+├── GUI/             # GUI版本
+│   ├── gui.py           # GUI主程序，基于tkinter
+│   ├── run_gui.bat      # Windows启动脚本
+│   ├── run_gui.sh       # Linux/Mac启动脚本
+│   └── README.md        # GUI版本说明
 ├── README.md        # 项目说明文档
 ├── .env.example     # 环境变量配置模板
 └── LICENSE          # MIT 许可证
@@ -110,23 +138,32 @@ CCLoop/
 
 ### 核心模块说明
 
+#### CLI版本
+
 | 文件              | 主要功能 |
 |-------------------|--------------------------------------------------|
-| loop.py           | TUI 主循环，命令行交互，调度核心逻辑             |
-| loop_core.py      | 核心循环、Judge 调用、目标处理、状态管理         |
-| display.py        | 终端输出美化、状态栏、格式化打印                 |
-| json_utils.py     | JSON 解析、编码修复、流式处理                   |
-| prompts.py        | Judge/Refine/Summarize 等系统提示词              |
-| token_stats.py    | Token 统计、LoopState/RoundLog 数据结构          |
+| CLI/loop.py       | TUI 主循环，命令行交互，调度核心逻辑             |
+| CLI/loop_core.py  | 核心循环、Judge 调用、目标处理、状态管理         |
+| CLI/display.py    | 终端输出美化、状态栏、格式化打印                 |
+| CLI/json_utils.py | JSON 解析、编码修复、流式处理                   |
+| CLI/prompts.py    | Judge/Refine/Summarize 等系统提示词              |
+| CLI/token_stats.py| Token 统计、LoopState/RoundLog 数据结构          |
+
+#### GUI版本
+
+| 文件              | 主要功能 |
+|-------------------|--------------------------------------------------|
+| GUI/gui.py        | GUI主程序，基于tkinter的图形界面                 |
 
 #### 主要流程与职责
 
-- **TUI 主循环**（loop.py）：负责命令行交互、用户输入、状态栏刷新。
-- **核心循环与 Judge**（loop_core.py）：实现自循环、目标管理、Judge 评估与决策。
-- **输出与美化**（display.py）：负责所有终端输出、颜色、宽度、状态栏等。
-- **JSON 工具**（json_utils.py）：增强 JSON 解析能力，处理编码与流式数据。
-- **提示词管理**（prompts.py）：集中管理 Judge/Refine/Summarize 等提示词。
-- **Token 统计**（token_stats.py）：统计各类 Token 消耗，记录循环日志。
+- **TUI 主循环**（CLI/loop.py）：负责命令行交互、用户输入、状态栏刷新。
+- **核心循环与 Judge**（CLI/loop_core.py）：实现自循环、目标管理、Judge 评估与决策。
+- **输出与美化**（CLI/display.py）：负责所有终端输出、颜色、宽度、状态栏等。
+- **JSON 工具**（CLI/json_utils.py）：增强 JSON 解析能力，处理编码与流式数据。
+- **提示词管理**（CLI/prompts.py）：集中管理 Judge/Refine/Summarize 等提示词。
+- **Token 统计**（CLI/token_stats.py）：统计各类 Token 消耗，记录循环日志。
+- **GUI 界面**（GUI/gui.py）：提供图形化操作界面，集成核心循环逻辑。
 
 ## 常见问题
 

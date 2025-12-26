@@ -569,12 +569,16 @@ async def self_loop(
             if judge["done"]:
                 state.status = AppStatus.FINISHED
                 state.goal_set = False
+                # 保存最终时间，防止后续键盘输入刷新计时
+                state.final_elapsed = state.get_elapsed_time()
                 _refresh_ui()
                 return {"status": "completed", "rounds": r, "summary": judge["summary"]}
 
             next_instruction = judge["next_prompt"]
 
         state.status = AppStatus.PAUSED
+        # 保存最终时间，防止后续键盘输入刷新计时
+        state.final_elapsed = state.get_elapsed_time()
         _refresh_ui()
         return {"status": "max_rounds_reached", "rounds": max_rounds, "summary": "达到轮次限制，等待指示。"}
 
