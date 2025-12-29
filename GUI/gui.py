@@ -21,13 +21,18 @@ if sys.platform == "win32":
         except Exception:
             pass
 
-# 添加CLI目录到Python路径
-cli_path = pathlib.Path(__file__).parent.parent / "CLI"
-if str(cli_path) not in sys.path:
-    sys.path.insert(0, str(cli_path))
+# 添加CORE目录到Python路径
+core_path = pathlib.Path(__file__).parent.parent / "CORE"
+if str(core_path) not in sys.path:
+    sys.path.insert(0, str(core_path))
+
+# 加载环境变量（必须在导入loop_core之前）
+from dotenv import load_dotenv
+env_path = pathlib.Path(__file__).parent.parent / ".env"
+if env_path.exists():
+    load_dotenv(env_path)
 
 # 导入核心模块
-from dotenv import load_dotenv
 from loop_core import (
     AppStatus,
     CompleteLoopState,
@@ -37,11 +42,6 @@ from loop_core import (
     summarize_goal_once,
     update_goal_once,
 )
-
-# 加载环境变量
-env_path = pathlib.Path(__file__).parent.parent / ".env"
-if env_path.exists():
-    load_dotenv(env_path)
 
 MAX_ROUNDS = int(os.environ.get("MAX_ROUNDS", 6))
 
@@ -76,6 +76,7 @@ class CCLoopGUI:
         self.loop_task: Optional[asyncio.Task] = None
         self.loop_running = False
         self.timer_running = False
+        self.working_dir = os.getcwd()
 
         # 创建输出重定向器
         self.output_redirector = GUIOutputRedirector(self)
@@ -88,29 +89,58 @@ class CCLoopGUI:
         self._setup_ui()
 
     def _inject_output_redirector(self):
-        """注入输出重定向到display模块"""
-        try:
-            import display
-            original_aprint = display.aprint
-            original_print_box = display._print_box
+        """设置CORE模块的回调函数"""
+        def on_text(text: str):
+            """文本输出回调"""
+            self._print_output(text)
 
-            def gui_aprint(s: str = "", *, end: str = "\n", flush: bool = False) -> None:
-                """GUI版本的aprint"""
-                self._print_output(s + end)
+        def on_tool_use(tool_name: str, input_data: str):
+            """工具使用回调"""
+            self._append_output(f"\n🛠️ Tool Use: {tool_name}\n", "info", "tool")
+            if input_data:
+                lines = input_data.strip().split("\n") if input_data else [""]
+                for line in lines[:10]:
+                    if line.strip().startswith("$"):
+                        self._append_output(f"  {line}\n", "bold", "tool")
+                    else:
+                        self._append_output(f"  {line}\n", "dim", "tool")
+                if len(lines) > 10:
+                    self._append_output(f"  ... ({len(lines) - 10} more lines)\n", "dim", "tool")
 
-            def gui_print_box(title: str, content: str, style: str = "normal", max_lines: int = 8) -> None:
-                """GUI版本的_print_box"""
-                self._print_box(title, content, style)
+        def on_tool_result(result: str):
+            """工具结果回调"""
+            self._append_output(f"\n📝 Tool Result:\n", "info", "tool")
+            if result:
+                self._append_output(result if result.endswith("\n") else result + "\n", "dim", "tool")
 
-            display.aprint = gui_aprint
-            display._print_box = gui_print_box
+        def on_judge(judgment: str):
+            """判断回调"""
+            self._append_output(f"\n⚖️ Judge: {judgment}\n", "warning", "text")
 
-            # 注入到loop_core模块
-            import loop_core
-            loop_core._refresh_ui = self._refresh_ui
+        def on_status(status: str):
+            """状态回调"""
+            self._append_output(f"\n📊 Status: {status}\n", "info", "text")
 
-        except Exception:
+        def on_token(tokens: dict):
+            """Token统计回调"""
             pass
+
+        def on_error(error: str):
+            """错误回调"""
+            self._append_output(f"\n❌ Error: {error}\n", "error", "text")
+
+        def on_raw(raw: str):
+            """原始输出回调"""
+            self._print_output(raw)
+
+        self.state.callbacks.on_text = on_text
+        self.state.callbacks.on_tool_use = on_tool_use
+        self.state.callbacks.on_tool_result = on_tool_result
+        self.state.callbacks.on_judge = on_judge
+        self.state.callbacks.on_status = on_status
+        self.state.callbacks.on_token = on_token
+        self.state.callbacks.on_error = on_error
+        self.state.callbacks.on_raw = on_raw
 
     def _refresh_ui(self):
         """刷新UI"""
@@ -129,6 +159,17 @@ class CCLoopGUI:
             "output_bg": "#1e1e1e",
             "output_fg": "#d4d4d4",
         }
+        
+        # 设置字体（跨平台支持）
+        if sys.platform == "win32":
+            self.font_family = "Microsoft YaHei"
+        elif sys.platform == "darwin":
+            self.font_family = "PingFang SC"
+        else:
+            self.font_family = "DejaVu Sans Mono"
+        
+        self.base_font = (self.font_family, 9)
+        self.bold_font = (self.font_family, 9, "bold")
 
     def _setup_ui(self):
         """设置UI界面"""
@@ -144,38 +185,81 @@ class CCLoopGUI:
         goal_frame = ttk.LabelFrame(main_frame, text="目标", padding="5")
         goal_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
         goal_frame.columnconfigure(0, weight=1)
+        goal_frame.columnconfigure(1, weight=1)
 
         self.goal_entry = ttk.Entry(goal_frame)
         self.goal_entry.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 5))
 
         self.set_goal_btn = ttk.Button(goal_frame, text="设置目标", command=self._on_set_goal)
-        self.set_goal_btn.grid(row=0, column=1)
+        self.set_goal_btn.grid(row=0, column=1, padx=(0, 5))
 
-        # 输出区域
+        self.dir_entry = ttk.Entry(goal_frame)
+        self.dir_entry.grid(row=0, column=2, sticky=(tk.W, tk.E), padx=(0, 5))
+
+        self.set_dir_btn = ttk.Button(goal_frame, text="设置目录", command=self._on_set_dir)
+        self.set_dir_btn.grid(row=0, column=3)
+
+        goal_frame.columnconfigure(0, weight=2)
+        goal_frame.columnconfigure(2, weight=1)
+
+        # 双列输出区域
         output_frame = ttk.LabelFrame(main_frame, text="输出日志", padding="5")
         output_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         output_frame.columnconfigure(0, weight=1)
+        output_frame.columnconfigure(1, weight=1)
         output_frame.rowconfigure(0, weight=1)
 
-        self.output_text = scrolledtext.ScrolledText(
-            output_frame,
+        # 左侧：工具调用日志
+        tool_frame = ttk.LabelFrame(output_frame, text="工具调用日志", padding="5")
+        tool_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(0, 5))
+
+        self.tool_text = scrolledtext.ScrolledText(
+            tool_frame,
             wrap=tk.WORD,
             bg=self.colors["output_bg"],
             fg=self.colors["output_fg"],
-            font=("Consolas", 9),
+            font=self.base_font,
+            width=40,
         )
-        self.output_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.tool_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        tool_frame.columnconfigure(0, weight=1)
+        tool_frame.rowconfigure(0, weight=1)
 
-        # 配置文本标签
-        self.output_text.tag_config("normal", foreground=self.colors["output_fg"])
-        self.output_text.tag_config("bold", foreground=self.colors["output_fg"], font=("Consolas", 9, "bold"))
-        self.output_text.tag_config("info", foreground="#4fc1ff")
-        self.output_text.tag_config("success", foreground="#4ec9b0")
-        self.output_text.tag_config("warning", foreground="#dcdcaa")
-        self.output_text.tag_config("error", foreground="#f14c4c")
-        self.output_text.tag_config("dim", foreground="#808080")
-        self.output_text.tag_config("tool_use", foreground="#569cd6")
-        self.output_text.tag_config("tool_result", foreground="#ce9178")
+        # 配置工具日志文本标签
+        self.tool_text.tag_config("normal", foreground=self.colors["output_fg"])
+        self.tool_text.tag_config("bold", foreground=self.colors["output_fg"], font=self.bold_font)
+        self.tool_text.tag_config("info", foreground="#4fc1ff")
+        self.tool_text.tag_config("success", foreground="#4ec9b0")
+        self.tool_text.tag_config("warning", foreground="#dcdcaa")
+        self.tool_text.tag_config("error", foreground="#f14c4c")
+        self.tool_text.tag_config("dim", foreground="#808080")
+        self.tool_text.tag_config("tool_use", foreground="#569cd6")
+        self.tool_text.tag_config("tool_result", foreground="#ce9178")
+
+        # 右侧：文本输出内容
+        text_frame = ttk.LabelFrame(output_frame, text="文本输出内容", padding="5")
+        text_frame.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        self.text_text = scrolledtext.ScrolledText(
+            text_frame,
+            wrap=tk.WORD,
+            bg=self.colors["output_bg"],
+            fg=self.colors["output_fg"],
+            font=self.base_font,
+            width=40,
+        )
+        self.text_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        text_frame.columnconfigure(0, weight=1)
+        text_frame.rowconfigure(0, weight=1)
+
+        # 配置文本输出标签
+        self.text_text.tag_config("normal", foreground=self.colors["output_fg"])
+        self.text_text.tag_config("bold", foreground=self.colors["output_fg"], font=self.bold_font)
+        self.text_text.tag_config("info", foreground="#4fc1ff")
+        self.text_text.tag_config("success", foreground="#4ec9b0")
+        self.text_text.tag_config("warning", foreground="#dcdcaa")
+        self.text_text.tag_config("error", foreground="#f14c4c")
+        self.text_text.tag_config("dim", foreground="#808080")
 
         # 控制按钮区域
         control_frame = ttk.Frame(main_frame)
@@ -189,9 +273,6 @@ class CCLoopGUI:
 
         self.clear_btn = ttk.Button(control_frame, text="清除", command=self._on_clear)
         self.clear_btn.pack(side=tk.LEFT, padx=(0, 5))
-
-        self.refine_btn = ttk.Button(control_frame, text="润色", command=self._on_refine)
-        self.refine_btn.pack(side=tk.LEFT, padx=(0, 5))
 
         self.exit_btn = ttk.Button(control_frame, text="退出", command=self._on_exit)
         self.exit_btn.pack(side=tk.RIGHT)
@@ -231,7 +312,14 @@ class CCLoopGUI:
             return
 
         # 更新状态
-        status_color = self.colors.get(self.state.status.value.lower(), self.colors["idle"])
+        status_map = {
+            AppStatus.IDLE: "idle",
+            AppStatus.RUNNING: "running",
+            AppStatus.PAUSED: "paused",
+            AppStatus.FINISHED: "finished",
+        }
+        status_key = status_map.get(self.state.status, "idle")
+        status_color = self.colors.get(status_key, self.colors["idle"])
         self.status_label.config(text=f"状态: {self.state.status.value}", foreground=status_color)
 
         # 更新目标显示
@@ -255,18 +343,23 @@ class CCLoopGUI:
         output_t = self.state.total_output_tokens
         cache_t = self.state.total_cache_read_tokens
         token_text = f"Token: I:{input_t:,} O:{output_t:,}"
-        if cache_t:
+        if cache_t is not None and cache_t > 0:
             token_text += f" C:{cache_t:,}"
         self.token_label.config(text=token_text)
 
         # 继续定时器
         self.root.after(1000, self._update_status_bar)
 
-    def _append_output(self, text: str, tag: str = "normal"):
+    def _append_output(self, text: str, tag: str = "normal", widget: str = "text"):
         """追加输出到日志区域"""
-        self.output_text.insert(tk.END, text, tag)
-        self.output_text.see(tk.END)
-        self.output_text.update()
+        if widget == "tool":
+            self.tool_text.insert(tk.END, text, tag)
+            self.tool_text.see(tk.END)
+            self.tool_text.update()
+        else:
+            self.text_text.insert(tk.END, text, tag)
+            self.text_text.see(tk.END)
+            self.text_text.update()
 
     def _append_colored(self, text: str, color_code: str):
         """追加带颜色的输出"""
@@ -312,15 +405,24 @@ class CCLoopGUI:
 
     def _print_box(self, title: str, content: str, style: str = "normal"):
         """打印带边框的内容框（简化版）"""
-        icon = "🛠️ " if style == "tool_use" else "📝" if style == "tool_result" else "ℹ️ "
-        self._append_output(f"\n{icon} {title}\n", "info")
+        if style == "tool_use":
+            icon = "🛠️ "
+            widget = "tool"
+        elif style == "tool_result":
+            icon = "📝"
+            widget = "tool"
+        else:
+            icon = "ℹ️ "
+            widget = "text"
+        
+        self._append_output(f"\n{icon} {title}\n", "info", widget)
         
         lines = content.strip().split("\n") if content else [""]
         for line in lines[:20]:  # 限制显示行数
-            self._append_output(f"  {line}\n", "dim")
+            self._append_output(f"  {line}\n", "dim", widget)
         if len(lines) > 20:
-            self._append_output(f"  ... ({len(lines) - 20} more lines)\n", "dim")
-        self._append_output("\n", "normal")
+            self._append_output(f"  ... ({len(lines) - 20} more lines)\n", "dim", widget)
+        self._append_output("\n", "normal", widget)
 
     def _on_set_goal(self):
         """设置目标"""
@@ -338,24 +440,63 @@ class CCLoopGUI:
         self.state.start_time = None
         self.state.round_start_time = None
 
-        self._print_output(f"\n[Goal Set] 🎯 {goal_text}\n")
+        self._append_output(f"\n[Goal Set] 🎯 {goal_text}\n", "normal", "text")
 
-        # 自动润色
-        model = os.environ.get("OPENAI_MODEL", "gpt-4")
-        self._print_output(f">>> 正在润色目标 ({model}) ...\n")
-        new_refined = refine_goal_once(goal=self.state.goal, state=self.state)
+        def run_refine():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                model = os.environ.get("OPENAI_MODEL", "gpt-4")
+                self.root.after(0, lambda: self._append_output(f">>> 正在润色目标 ({model}) ...\n", "normal", "text"))
+                
+                new_refined = refine_goal_once(goal=self.state.goal, state=self.state)
+                self.root.after(0, lambda: self._on_refine_completed(new_refined))
+            finally:
+                loop.close()
+
+        threading.Thread(target=run_refine, daemon=True).start()
+        self.goal_entry.delete(0, tk.END)
+
+    def _on_refine_completed(self, new_refined: str):
+        """润色完成后回调"""
         if new_refined:
             self.state.refined_goal = new_refined
-            self._print_output(f"[Refined] {new_refined}\n")
+            self._append_output(f"[Refined] {new_refined}\n", "normal", "text")
 
-        # 自动精简
-        self._print_output(">>> 正在精简目标 ...\n")
-        self.state.goal_summary = summarize_goal_once(goal=self.state.refined_goal or self.state.goal, state=self.state)
-        if self.state.goal_summary:
-            self._print_output(f"[Summary] 📌 {self.state.goal_summary}\n")
+        def run_summarize():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                self.root.after(0, lambda: self._append_output(">>> 正在精简目标 ...\n", "normal", "text"))
+                summary = summarize_goal_once(goal=self.state.refined_goal or self.state.goal, state=self.state)
+                self.root.after(0, lambda: self._on_summarize_completed(summary))
+            finally:
+                loop.close()
 
-        self._print_output("使用 '开始' 按钮运行\n")
-        self.goal_entry.delete(0, tk.END)
+        threading.Thread(target=run_summarize, daemon=True).start()
+
+    def _on_summarize_completed(self, summary: str):
+        """精简完成后回调"""
+        if summary:
+            self.state.goal_summary = summary
+            self._append_output(f"[Summary] 📌 {summary}\n", "normal", "text")
+        self._append_output("使用 '开始' 按钮运行\n", "normal", "text")
+
+    def _on_set_dir(self):
+        """设置运行目录"""
+        dir_text = self.dir_entry.get().strip()
+        if not dir_text:
+            messagebox.showwarning("警告", "请输入目录路径")
+            return
+
+        if not os.path.isdir(dir_text):
+            messagebox.showerror("错误", f"目录不存在: {dir_text}")
+            return
+
+        self.working_dir = dir_text
+        os.chdir(self.working_dir)
+        self._append_output(f"\n[Directory Set] 📁 {self.working_dir}\n", "normal", "text")
+        self.dir_entry.delete(0, tk.END)
 
     def _on_start(self):
         """开始运行"""
@@ -367,38 +508,47 @@ class CCLoopGUI:
             messagebox.showinfo("提示", "已在运行中")
             return
 
-        self._print_output(f"\n[Start] 开始执行: {self.state.refined_goal or self.state.goal}\n")
+        self._append_output(f"\n[Start] 开始执行: {self.state.refined_goal or self.state.goal}\n", "normal", "text")
+        self._append_output(f"[Working Directory] 📁 {self.working_dir}\n", "normal", "text")
+
+        # 停止之前的循环任务（如果有）
+        if self.loop_task and not self.loop_task.done():
+            self.loop_task.cancel()
 
         # 在新线程中运行异步任务
         def run_loop():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                loop.run_until_complete(self._run_loop_async())
+                self.loop_task = loop.create_task(self._run_loop_async())
+                loop.run_until_complete(self.loop_task)
+            except asyncio.CancelledError:
+                pass
             finally:
                 loop.close()
 
         self.loop_running = True
+        self._update_button_states()
         threading.Thread(target=run_loop, daemon=True).start()
 
     async def _run_loop_async(self):
         """异步运行循环"""
         try:
-            result = await self_loop(max_rounds=MAX_ROUNDS, state=self.state)
-            self._print_output(f"\n[Done] {result['summary']}\n")
+            result = await self_loop(max_rounds=MAX_ROUNDS, cwd=self.working_dir, state=self.state)
+            self._append_output(f"\n[Done] {result['summary']}\n", "normal", "text")
         except asyncio.CancelledError:
-            self._print_output("\n[Info] 任务已暂停\n")
+            self._append_output("\n[Info] 任务已暂停\n", "normal", "text")
         except Exception as e:
-            self._print_output(f"\n[Error] {e}\n")
+            self._append_output(f"\n[Error] {e}\n", "error", "text")
         finally:
             self.loop_running = False
             self.root.after(0, lambda: self._update_button_states())
 
     def _on_pause(self):
         """暂停运行"""
-        if self.loop_running:
-            self.loop_running = False
-            self._print_output("\n[Info] 正在暂停...\n")
+        if self.loop_task and not self.loop_task.done():
+            self._append_output("\n[Info] 正在暂停...\n", "normal", "text")
+            self.loop_task.cancel()
 
     def _on_clear(self):
         """清除目标"""
@@ -415,28 +565,9 @@ class CCLoopGUI:
         if hasattr(self.state, 'final_elapsed'):
             del self.state.final_elapsed
 
-        self.output_text.delete(1.0, tk.END)
-        self._print_output("[Clear] 目标已清除\n")
-
-    def _on_refine(self):
-        """润色目标"""
-        if not self.state.goal_set:
-            messagebox.showwarning("警告", "没有目标，请先设置目标")
-            return
-
-        model = os.environ.get("OPENAI_MODEL", "gpt-4")
-        self._print_output(f"\n>>> 正在请求 Refine ({model}) ...\n")
-        old_refined = self.state.refined_goal or self.state.goal
-        new_refined = refine_goal_once(goal=self.state.goal, state=self.state)
-
-        if new_refined != old_refined:
-            self.state.refined_goal = new_refined
-            self.state.goal_summary = summarize_goal_once(goal=new_refined, state=self.state)
-            self._print_output(f"[Refined] {new_refined}\n")
-            if self.state.goal_summary != new_refined:
-                self._print_output(f"[Summary] 📌 {self.state.goal_summary}\n")
-        else:
-            self._print_output(f"[Refine] 目标未变化（{new_refined}）\n")
+        self.tool_text.delete(1.0, tk.END)
+        self.text_text.delete(1.0, tk.END)
+        self._append_output("[Clear] 目标已清除\n", "normal", "text")
 
     def _on_exit(self):
         """退出程序"""

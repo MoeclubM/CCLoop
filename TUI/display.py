@@ -62,7 +62,7 @@ def _pretty(obj: Any) -> str:
 ENABLE_COLOR = bool(getattr(sys.stdout, "isatty", lambda: False)())
 
 
-def aprint(s: str = "", *, end: str = "\n", flush: bool = False) -> None:
+def aprint(s: str = "", *, end: str = "\n", flush: bool = True) -> None:
     """ANSI-aware print"""
     global ENABLE_COLOR
 
@@ -71,11 +71,11 @@ def aprint(s: str = "", *, end: str = "\n", flush: bool = False) -> None:
 
     print_formatted_text(ANSI(s), end=end)
 
-    if flush:
-        try:
-            sys.stdout.flush()
-        except Exception:
-            pass
+    # TUI 模式下必须立即刷新，否则输出会缓冲
+    try:
+        sys.stdout.flush()
+    except Exception:
+        pass
 
 
 def _print_box(title: str, content: str, style: str = "normal", max_lines: int = 8) -> None:

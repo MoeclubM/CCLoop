@@ -7,6 +7,7 @@ import asyncio
 import os
 import sys
 from typing import Optional
+import pathlib
 
 # ------------------------------------------------------------
 # 1) Windows 环境修复 (编码)
@@ -20,13 +21,19 @@ if sys.platform == "win32":
             pass
 
 # ------------------------------------------------------------
-# 2) 导入模块
+# 2) 添加CORE目录到Python路径
 # ------------------------------------------------------------
-from display import aprint
+core_path = pathlib.Path(__file__).parent.parent / "CORE"
+if str(core_path) not in sys.path:
+    sys.path.insert(0, str(core_path))
+
+# ------------------------------------------------------------
+# 3) 导入模块
+# ------------------------------------------------------------
+from display import aprint, _print_box
 from loop_core import (
     AppStatus,
     CompleteLoopState,
-    _refresh_ui as _core_refresh_ui,
     judge_once,
     refine_goal_once,
     self_loop,
@@ -62,6 +69,48 @@ async def _timer_refresh_task(session: PromptSession, state: CompleteLoopState, 
 
 async def main() -> None:
     state = CompleteLoopState()
+
+    # 设置CORE模块的回调函数
+    def on_text(text: str):
+        """文本输出回调"""
+        aprint(text)
+
+    def on_tool_use(tool_name: str, input_data: str):
+        """工具使用回调"""
+        _print_box(title=f"Tool Use: {tool_name}", content=input_data, style="tool_use")
+
+    def on_tool_result(result: str):
+        """工具结果回调"""
+        _print_box(title="Tool Result", content=result, style="tool_result")
+
+    def on_judge(judgment: str):
+        """判断回调"""
+        aprint(f"\n\033[1;33m⚖️ Judge: {judgment}\033[0m\n")
+
+    def on_status(status: str):
+        """状态回调"""
+        aprint(f"\n\033[1;34m📊 Status: {status}\033[0m\n")
+
+    def on_token(tokens: dict):
+        """Token统计回调"""
+        pass
+
+    def on_error(error: str):
+        """错误回调"""
+        aprint(f"\n\033[31m❌ Error: {error}\033[0m\n")
+
+    def on_raw(raw: str):
+        """原始输出回调 - 暂时禁用"""
+        pass  # 不保存到文件，直接输出
+
+    state.callbacks.on_text = on_text
+    state.callbacks.on_tool_use = on_tool_use
+    state.callbacks.on_tool_result = on_tool_result
+    state.callbacks.on_judge = on_judge
+    state.callbacks.on_status = on_status
+    state.callbacks.on_token = on_token
+    state.callbacks.on_error = on_error
+    state.callbacks.on_raw = on_raw
 
     # 用于控制计时器任务的标志
     timer_running = {"value": False}
@@ -340,7 +389,6 @@ async def main() -> None:
                         pass
                 timer_task = None
                 background_task = None
-                _refresh_ui()
             else:
                 aprint("\n[System] 退出程序。")
                 break
@@ -354,7 +402,6 @@ if __name__ == "__main__":
         """单次运行 Claude Code（无循环）"""
         state = CompleteLoopState()
         state.status = AppStatus.RUNNING
-        _core_refresh_ui()
         try:
             output, tokens = await _run_claude_once(prompt=prompt, cwd=".", state=state)
             aprint(f"\n\033[90m[Token] 输入: {tokens.input_tokens} | 输出: {tokens.output_tokens}\033[0m")
@@ -363,7 +410,6 @@ if __name__ == "__main__":
             aprint(f"\n\033[31m[Error] {e}\033[0m")
         finally:
             state.status = AppStatus.IDLE
-            _core_refresh_ui()
 
     # 动态添加函数到 loop_core 模块
     import loop_core

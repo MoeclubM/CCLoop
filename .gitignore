@@ -1,3 +1,2 @@
 .env
-/__pycache__
-/CLI/__pycache__
+*.pyc
