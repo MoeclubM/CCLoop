@@ -6,7 +6,6 @@ import asyncio
 import json
 import os
 import shlex
-import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
@@ -78,6 +77,21 @@ def _get_max_rounds() -> int:
 
 
 # ------------------------------------------------------------
+# 动态注入的函数占位符（由 UI 层实现）
+# ------------------------------------------------------------
+
+
+def _refresh_ui() -> None:
+    """刷新 UI 的占位符"""
+    pass
+
+
+async def run_single_prompt(prompt: str) -> None:
+    """单次运行的占位符"""
+    pass
+
+
+# ------------------------------------------------------------
 # 工具函数
 # ------------------------------------------------------------
 
@@ -101,6 +115,7 @@ class CompleteLoopState(LoopState):
         super().__init__()
         self._app_status = AppStatus.IDLE
         self.callbacks = OutputCallbacks()
+        self.final_elapsed: Optional[str] = None
 
     @property
     def status(self) -> AppStatus:
@@ -221,7 +236,6 @@ def _handle_event(obj: Dict[str, Any], state: CompleteLoopState) -> None:
                 }
                 state.callbacks.on_token(token_info)
 
-        from token_stats import calc_tokens_for_usage
 
         content = msg.get("content")
         if not isinstance(content, list):
@@ -288,7 +302,6 @@ def _handle_event(obj: Dict[str, Any], state: CompleteLoopState) -> None:
             tur = obj["tool_use_result"]
             if isinstance(tur, dict):
                 # 处理新的 Claude Code 格式 (type: "text" 或 type: "file")
-                result_type = tur.get("type")
                 content = tur.get("content", "") or tur.get("output", "")
                 file_info = tur.get("file", {})
 
@@ -330,7 +343,7 @@ def _handle_event(obj: Dict[str, Any], state: CompleteLoopState) -> None:
         if state.callbacks.on_raw:
             try:
                 # 检查obj是否包含过大的字段
-                safe_obj = {}
+                safe_obj: Dict[str, Any] = {}
                 for k, v in obj.items():
                     if k == "message" and isinstance(v, dict):
                         # 跳过可能有问题的message content
@@ -704,10 +717,13 @@ def update_goal_once(
 
 def build_claude_prompt(goal: str, refined_goal: str, next_instruction: str, is_first: bool) -> str:
     """构建发送给 Claude 的提示"""
-    display_goal = refined_goal if is_first and refined_goal else goal
+    # 如果是第一轮，且有润色后的目标，则使用润色后的目标
+    # 否则始终使用原始目标（或保持当前目标）
+    current_goal = refined_goal if (is_first and refined_goal) else goal
+
     if next_instruction.strip():
-        return f"目标：{display_goal}\n\n上一轮进展摘要：{next_instruction}\n\n请继续完成目标。"
-    return f"目标：{display_goal}\n\n请完成目标。"
+        return f"目标：{current_goal}\n\n上一轮进展摘要：{next_instruction}\n\n请继续完成目标。"
+    return f"目标：{current_goal}\n\n请完成目标。"
 
 
 async def self_loop(

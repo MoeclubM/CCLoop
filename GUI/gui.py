@@ -36,11 +36,9 @@ if env_path.exists():
 from loop_core import (
     AppStatus,
     CompleteLoopState,
-    judge_once,
     refine_goal_once,
     self_loop,
     summarize_goal_once,
-    update_goal_once,
 )
 
 MAX_ROUNDS = int(os.environ.get("MAX_ROUNDS", 6))
@@ -98,7 +96,10 @@ class CCLoopGUI:
             """工具使用回调"""
             self._append_output(f"\n🛠️ Tool Use: {tool_name}\n", "info", "tool")
             if input_data:
-                lines = input_data.strip().split("\n") if input_data else [""]
+                # 统一换行符并分割
+                clean_data = input_data.replace("\r\n", "\n").replace("\r", "\n")
+                lines = clean_data.strip().split("\n") if clean_data else [""]
+
                 for line in lines[:10]:
                     if line.strip().startswith("$"):
                         self._append_output(f"  {line}\n", "bold", "tool")
@@ -109,7 +110,7 @@ class CCLoopGUI:
 
         def on_tool_result(result: str):
             """工具结果回调"""
-            self._append_output(f"\n📝 Tool Result:\n", "info", "tool")
+            self._append_output("\n📝 Tool Result:\n", "info", "tool")
             if result:
                 self._append_output(result if result.endswith("\n") else result + "\n", "dim", "tool")
 
@@ -360,20 +361,6 @@ class CCLoopGUI:
             self.text_text.insert(tk.END, text, tag)
             self.text_text.see(tk.END)
             self.text_text.update()
-
-    def _append_colored(self, text: str, color_code: str):
-        """追加带颜色的输出"""
-        color_map = {
-            "\033[90m": "dim",
-            "\033[1;35m": "info",
-            "\033[1;34m": "info",
-            "\033[1;32m": "success",
-            "\033[1;33m": "warning",
-            "\033[31m": "error",
-            "\033[0m": "normal",
-        }
-        tag = color_map.get(color_code, "normal")
-        self._append_output(text, tag)
 
     def _print_output(self, text: str):
         """打印输出，处理ANSI颜色代码"""

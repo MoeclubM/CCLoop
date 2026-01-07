@@ -34,7 +34,6 @@ from display import aprint, _print_box
 from loop_core import (
     AppStatus,
     CompleteLoopState,
-    judge_once,
     refine_goal_once,
     self_loop,
     summarize_goal_once,
@@ -218,6 +217,7 @@ async def main() -> None:
 
                         async def self_loop_with_cleanup():
                             """运行 self_loop 并在完成后清理计时器"""
+                            nonlocal timer_task
                             try:
                                 await self_loop(max_rounds=MAX_ROUNDS, state=state)
                             finally:
@@ -307,7 +307,7 @@ async def main() -> None:
                         aprint(f"\033[90m[Refined] {new_refined}\033[0m")
 
                     # 自动精简
-                    aprint(f"\033[90m>>> 正在精简目标 ...\033[0m")
+                    aprint("\033[90m>>> 正在精简目标 ...\033[0m")
                     state.goal_summary = summarize_goal_once(goal=state.refined_goal or state.goal, state=state)
                     if state.goal_summary:
                         aprint(f"\033[90m[Summary] 📌 {state.goal_summary}\033[0m")
@@ -363,7 +363,7 @@ async def main() -> None:
                         aprint(f"\033[90m[Refined] {new_refined}\033[0m")
 
                     # 自动精简
-                    aprint(f"\033[90m>>> 正在精简目标 ...\033[0m")
+                    aprint("\033[90m>>> 正在精简目标 ...\033[0m")
                     state.goal_summary = summarize_goal_once(goal=state.refined_goal or state.goal, state=state)
                     if state.goal_summary:
                         aprint(f"\033[90m[Summary] 📌 {state.goal_summary}\033[0m")
@@ -405,7 +405,7 @@ if __name__ == "__main__":
         try:
             output, tokens = await _run_claude_once(prompt=prompt, cwd=".", state=state)
             aprint(f"\n\033[90m[Token] 输入: {tokens.input_tokens} | 输出: {tokens.output_tokens}\033[0m")
-            aprint(f"\n\033[1;32m[Done] 单次执行完成\033[0m")
+            aprint("\n\033[1;32m[Done] 单次执行完成\033[0m")
         except Exception as e:
             aprint(f"\n\033[31m[Error] {e}\033[0m")
         finally:

@@ -84,67 +84,6 @@ def _fix_json_text(text: str) -> str:
     return text
 
 
-def extract_all_json_objects(text: str) -> List[Dict[str, Any]]:
-    """从文本中提取所有 JSON 对象"""
-    objects = []
-    text = clean_invalid_unicode(text)
-
-    start = 0
-    while True:
-        start = text.find('{', start)
-        if start == -1:
-            break
-
-        depth = 0
-        end = start
-        in_string = False
-        escape_next = False
-
-        for i, char in enumerate(text[start:], start):
-            if escape_next:
-                escape_next = False
-                continue
-            if char == '\\' and in_string:
-                escape_next = True
-                continue
-            if char == '"' and not escape_next:
-                in_string = not in_string
-                continue
-            if in_string:
-                continue
-
-            if char == '{':
-                depth += 1
-            elif char == '}':
-                depth -= 1
-                if depth == 0:
-                    end = i + 1
-                    break
-
-        if depth == 0:
-            try:
-                obj = json.loads(text[start:end])
-                if isinstance(obj, dict):
-                    objects.append(obj)
-            except json.JSONDecodeError:
-                pass
-
-        start = end
-
-    return objects
-
-
-def safe_json_parse(data: str) -> Optional[Dict[str, Any]]:
-    """安全地解析 JSON，返回 None 而不是抛出异常"""
-    try:
-        obj = json.loads(data)
-        if isinstance(obj, dict):
-            return obj
-    except Exception:
-        pass
-    return None
-
-
 class JSONBuffer:
     """流式 JSON 缓冲器，用于处理不完整的 JSON 块"""
 

@@ -94,7 +94,7 @@ def extract_usage_from_obj(obj: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 def extract_message_stats(obj: Dict[str, Any]) -> Dict[str, Any]:
     """提取消息中的统计信息"""
-    stats = {
+    stats: Dict[str, Any] = {
         "role": "unknown",
         "has_text": False,
         "text_length": 0,
@@ -113,13 +113,13 @@ def extract_message_stats(obj: Dict[str, Any]) -> Dict[str, Any]:
                     btype = block.get("type")
                     if btype == "text":
                         stats["has_text"] = True
-                        text = block.get("text", "")
-                        if isinstance(text, str):
-                            stats["text_length"] += len(text)
+                        text_val = block.get("text", "")
+                        if isinstance(text_val, str):
+                            stats["text_length"] += len(text_val)
                     elif btype == "tool_use":
-                        stats["tool_use_count"] += 1
+                        stats["tool_use_count"] = int(stats["tool_use_count"]) + 1
                     elif btype == "tool_result":
-                        stats["tool_result_count"] += 1
+                        stats["tool_result_count"] = int(stats["tool_result_count"]) + 1
 
         if msg.get("usage"):
             stats["has_usage"] = True

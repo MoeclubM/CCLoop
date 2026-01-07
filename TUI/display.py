@@ -4,7 +4,7 @@
 
 import sys
 import unicodedata
-from typing import Any, List, Optional
+from typing import Any, List
 
 # 性能优化：缓存导入
 try:
@@ -43,15 +43,6 @@ def _str_width(s: str) -> int:
             ea = unicodedata.east_asian_width(char)
             width += 2 if ea in ("F", "W") else 1
         return width
-
-
-def _pretty(obj: Any) -> str:
-    if isinstance(obj, dict):
-        import json
-        return json.dumps(obj, ensure_ascii=False, indent=2)
-    if isinstance(obj, str):
-        return obj
-    return str(obj)
 
 
 # ------------------------------------------------------------
@@ -146,10 +137,3 @@ def _print_box(title: str, content: str, style: str = "normal", max_lines: int =
             is_first_part = False
 
     aprint(f"{border_color}└{'─'*(box_width-2)}┘{RESET}\n")
-
-
-def format_time(seconds: float) -> str:
-    """格式化时间显示"""
-    mins = int(seconds // 60)
-    secs = int(seconds % 60)
-    return f"{mins:02d}:{secs:02d}"
