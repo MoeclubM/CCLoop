@@ -154,17 +154,6 @@ async def main() -> None:
     style = Style.from_dict({"bottom-toolbar": "#333333 bg:#dddddd"})
     session = PromptSession(bottom_toolbar=get_bottom_toolbar, style=style)
 
-    # 注入 _refresh_ui 函数到 loop_core
-    def _injected_refresh_ui():
-        """刷新 UI - 触发底部工具栏更新"""
-        try:
-            session.app.invalidate()
-        except Exception:
-            pass
-
-    import loop_core
-    loop_core._refresh_ui = _injected_refresh_ui
-
     aprint("\n \033[1mClaude Code Looper \033[0m")
     aprint("\033[90m- /goal <目标>   设定目标（自动润色精简）")
     aprint("- /start         开始运行")
@@ -395,26 +384,6 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    # 注入 run_single_prompt 函数到 loop_core
-    from loop_core import run_claude_once as _run_claude_once, CompleteLoopState
-
-    async def run_single_prompt(prompt: str) -> None:
-        """单次运行 Claude Code（无循环）"""
-        state = CompleteLoopState()
-        state.status = AppStatus.RUNNING
-        try:
-            output, tokens = await _run_claude_once(prompt=prompt, cwd=".", state=state)
-            aprint(f"\n\033[90m[Token] 输入: {tokens.input_tokens} | 输出: {tokens.output_tokens}\033[0m")
-            aprint("\n\033[1;32m[Done] 单次执行完成\033[0m")
-        except Exception as e:
-            aprint(f"\n\033[31m[Error] {e}\033[0m")
-        finally:
-            state.status = AppStatus.IDLE
-
-    # 动态添加函数到 loop_core 模块
-    import loop_core
-    loop_core.run_single_prompt = run_single_prompt
-
     try:
         if sys.platform == "win32":
             asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())

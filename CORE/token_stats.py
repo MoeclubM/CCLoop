@@ -25,72 +25,6 @@ class TokenStats:
     input_tokens: int = 0
     output_tokens: int = 0
 
-    def __add__(self, other: "TokenStats") -> "TokenStats":
-        if not isinstance(other, TokenStats):
-            return self
-        return TokenStats(
-            round=0,
-            user_text_tokens=self.user_text_tokens + other.user_text_tokens,
-            assistant_text_tokens=self.assistant_text_tokens + other.assistant_text_tokens,
-            tool_use_tokens=self.tool_use_tokens + other.tool_use_tokens,
-            tool_result_tokens=self.tool_result_tokens + other.tool_result_tokens,
-            cache_creation_tokens=self.cache_creation_tokens + other.cache_creation_tokens,
-            cache_read_tokens=self.cache_read_tokens + other.cache_read_tokens,
-            input_tokens=self.input_tokens + other.input_tokens,
-            output_tokens=self.output_tokens + other.output_tokens,
-        )
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "user_text_tokens": self.user_text_tokens,
-            "assistant_text_tokens": self.assistant_text_tokens,
-            "tool_use_tokens": self.tool_use_tokens,
-            "tool_result_tokens": self.tool_result_tokens,
-            "cache_creation_tokens": self.cache_creation_tokens,
-            "cache_read_tokens": self.cache_read_tokens,
-            "input_tokens": self.input_tokens,
-            "output_tokens": self.output_tokens,
-        }
-
-    @property
-    def total(self) -> int:
-        """总 Token 数（不含缓存读取）"""
-        return self.input_tokens + self.output_tokens
-
-    @property
-    def total_with_cache(self) -> int:
-        """总 Token 数（含缓存读取，用于计费参考）"""
-        return self.input_tokens + self.output_tokens + self.cache_read_tokens
-
-    def format_summary(self) -> str:
-        """格式化摘要"""
-        parts = []
-        if self.user_text_tokens:
-            parts.append(f"用户文本: {self.user_text_tokens}")
-        if self.assistant_text_tokens:
-            parts.append(f"助手文本: {self.assistant_text_tokens}")
-        if self.tool_use_tokens:
-            parts.append(f"工具调用: {self.tool_use_tokens}")
-        if self.tool_result_tokens:
-            parts.append(f"工具结果: {self.tool_result_tokens}")
-        if self.cache_creation_tokens:
-            parts.append(f"缓存创建: {self.cache_creation_tokens}")
-        if self.cache_read_tokens:
-            parts.append(f"缓存读取: {self.cache_read_tokens}")
-        return " | ".join(parts) if parts else "无 Token 统计"
-
-
-def extract_usage_from_obj(obj: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """从 JSON 对象中提取 usage 信息"""
-    msg = obj.get("message")
-    if isinstance(msg, dict):
-        usage = msg.get("usage")
-        if usage:
-            return usage
-    if "usage" in obj:
-        return obj["usage"]
-    return None
-
 
 def extract_message_stats(obj: Dict[str, Any]) -> Dict[str, Any]:
     """提取消息中的统计信息"""
@@ -173,16 +107,6 @@ class LoopState:
     start_time: Optional[float] = None
     round_start_time: Optional[float] = None
 
-    @property
-    def total_tokens(self) -> int:
-        """总 Token 数（不含缓存读取）"""
-        return self.total_input_tokens + self.total_output_tokens
-
-    @property
-    def total_tokens_with_cache(self) -> int:
-        """总 Token 数（含缓存读取）"""
-        return self.total_input_tokens + self.total_output_tokens + self.total_cache_read_tokens
-
     def update_tokens(self, usage: Any) -> None:
         """更新 Token 统计"""
         if not usage:
@@ -204,21 +128,6 @@ class LoopState:
         self.total_cache_read_tokens += tokens.cache_read_tokens
         self.total_input_tokens += tokens.input_tokens
         self.total_output_tokens += tokens.output_tokens
-
-    def get_token_summary(self) -> str:
-        """获取 Token 统计摘要"""
-        parts = []
-        if self.total_user_text_tokens:
-            parts.append(f"用户: {self.total_user_text_tokens}")
-        if self.total_assistant_text_tokens:
-            parts.append(f"助手: {self.total_assistant_text_tokens}")
-        if self.total_tool_use_tokens:
-            parts.append(f"工具: {self.total_tool_use_tokens}")
-        if self.total_cache_creation_tokens:
-            parts.append(f"缓存创建: {self.total_cache_creation_tokens}")
-        if self.total_cache_read_tokens:
-            parts.append(f"缓存读取: {self.total_cache_read_tokens}")
-        return " | ".join(parts) if parts else "无统计"
 
     def clear_tokens(self) -> None:
         """清除 Token 统计"""

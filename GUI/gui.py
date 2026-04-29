@@ -44,23 +44,6 @@ from loop_core import (
 MAX_ROUNDS = int(os.environ.get("MAX_ROUNDS", 6))
 
 
-class GUIOutputRedirector:
-    """输出重定向适配器"""
-
-    def __init__(self, gui_instance):
-        self.gui = gui_instance
-        self.ansi_pattern = re.compile(r'\033\[[0-9;]*m')
-
-    def write(self, text: str):
-        """重定向输出到GUI"""
-        if text:
-            self.gui._print_output(text)
-
-    def flush(self):
-        """刷新输出"""
-        pass
-
-
 class CCLoopGUI:
     """CCLoop GUI主类"""
 
@@ -76,17 +59,14 @@ class CCLoopGUI:
         self.timer_running = False
         self.working_dir = os.getcwd()
 
-        # 创建输出重定向器
-        self.output_redirector = GUIOutputRedirector(self)
-
-        # 注入输出重定向到display模块
-        self._inject_output_redirector()
+        # 设置CORE模块的回调函数
+        self._setup_callbacks()
 
         # 先设置样式，再设置UI（因为UI会使用colors）
         self._setup_styles()
         self._setup_ui()
 
-    def _inject_output_redirector(self):
+    def _setup_callbacks(self):
         """设置CORE模块的回调函数"""
         def on_text(text: str):
             """文本输出回调"""
@@ -142,10 +122,6 @@ class CCLoopGUI:
         self.state.callbacks.on_token = on_token
         self.state.callbacks.on_error = on_error
         self.state.callbacks.on_raw = on_raw
-
-    def _refresh_ui(self):
-        """刷新UI"""
-        self.root.after(0, lambda: None)
 
     def _setup_styles(self):
         """设置样式"""
@@ -389,27 +365,6 @@ class CCLoopGUI:
                     code = codes[i - 1]
                     tag = color_map.get(code, "normal")
                 self._append_output(part, tag)
-
-    def _print_box(self, title: str, content: str, style: str = "normal"):
-        """打印带边框的内容框（简化版）"""
-        if style == "tool_use":
-            icon = "🛠️ "
-            widget = "tool"
-        elif style == "tool_result":
-            icon = "📝"
-            widget = "tool"
-        else:
-            icon = "ℹ️ "
-            widget = "text"
-        
-        self._append_output(f"\n{icon} {title}\n", "info", widget)
-        
-        lines = content.strip().split("\n") if content else [""]
-        for line in lines[:20]:  # 限制显示行数
-            self._append_output(f"  {line}\n", "dim", widget)
-        if len(lines) > 20:
-            self._append_output(f"  ... ({len(lines) - 20} more lines)\n", "dim", widget)
-        self._append_output("\n", "normal", widget)
 
     def _on_set_goal(self):
         """设置目标"""
